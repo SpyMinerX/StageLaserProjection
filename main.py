@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 import pygame
 import threading
 from screeninfo import get_monitors
@@ -22,6 +22,17 @@ class StageLaserProjectionApp:
         self.monitor_combobox.pack(pady=5)
         self.monitor_combobox['values'] = [f"Monitor {i+1}: {m.width}x{m.height}" for i, m in enumerate(get_monitors())]
         self.monitor_combobox.current(0)
+
+        # Scene folder selection
+        self.folder_label = tk.Label(root, text="Scene Folder:")
+        self.folder_label.pack(pady=5)
+
+        self.folder_path = tk.StringVar(value="scenes")
+        self.folder_entry = tk.Entry(root, textvariable=self.folder_path, state="readonly", width=40)
+        self.folder_entry.pack(pady=5)
+
+        self.browse_button = tk.Button(root, text="Browse Folder", command=self.browse_folder)
+        self.browse_button.pack(pady=5)
 
         # Scene selection
         self.scene_label = tk.Label(root, text="Select Scene for Laser Animation:")
@@ -49,16 +60,31 @@ class StageLaserProjectionApp:
         self.scenes = {}
         self.load_scenes()
 
+    def browse_folder(self):
+        """Open a file dialog to select a folder for scenes."""
+        folder_selected = filedialog.askdirectory(title="Select Scene Folder")
+        if folder_selected:
+            self.folder_path.set(folder_selected)
+            self.load_scenes()
+
     def load_scenes(self):
-        """Load scenes from JSON files in the 'scenes' directory."""
-        scene_files = glob.glob("scenes/*.json")
+        """Load scenes from JSON files in the selected folder."""
+        folder = self.folder_path.get()
+        scene_files = glob.glob(os.path.join(folder, "*.json"))
+        self.scenes = {}
         for file in scene_files:
             with open(file, "r") as f:
-                scene_data = json.load(f)
-                self.scenes[scene_data["name"]] = scene_data
+                try:
+                    scene_data = json.load(f)
+                    self.scenes[scene_data["name"]] = scene_data
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"Error loading scene from {file}: {e}")
+
         self.scene_combobox["values"] = list(self.scenes.keys())
         if self.scenes:
             self.scene_combobox.current(0)
+        else:
+            self.scene_combobox.set("")
 
     def start_scene(self):
         if self.running:
