@@ -1,3 +1,4 @@
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog
 import pygame
@@ -9,13 +10,46 @@ import glob
 import math
 import base64
 import random
+import socket
 from tkinter.colorchooser import askcolor
 
+
+class ArtNetReceiver(threading.Thread):
+    def __init__(self, app):
+        super().__init__(daemon=True)
+        self.app = app
+        self.dmx_channel = 0
+        self.running = True
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("0.0.0.0", 6454))  # Default Art-Net port
+
+    def run(self):
+        while self.running:
+            try:
+                data, _ = self.sock.recvfrom(1024)
+                if data[:8] == b"Art-Net\0" and data[8:10] == b"\x00\x50":
+                    # Parse ArtDMX packet
+                    dmx_data = data[18:]  # DMX data starts at byte 18
+                    if len(dmx_data) > 511:
+                        brightness = dmx_data[0]
+                        speed = dmx_data[1]
+                        radius = dmx_data[2]
+                        self.app.update_slider(brightness, speed, radius)
+            except Exception as e:
+                print(f"Art-Net receiver error: {e}")
+
+    def stop(self):
+        self.running = False
+        self.sock.close()
 
 class StageLaserProjectionApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Stage Laser Projection")
+
+        # Art-Net Receiver
+        self.artnet_receiver = ArtNetReceiver(self)
+        self.artnet_receiver.start()
 
         # Monitor selection
         self.monitor_label = tk.Label(root, text="Select Monitor for Projection:")
@@ -46,13 +80,42 @@ class StageLaserProjectionApp:
         self.scene_combobox.pack(pady=5)
         self.scene_combobox.bind("<<ComboboxSelected>>", self.change_scene)
 
-        # Brightness slider
-        self.brightness_label = tk.Label(root, text="Laser Brightness:")
-        self.brightness_label.pack(pady=5)
+        # Laser Settings Label
+        self.settings_label = tk.Label(root, text="Laser Settings:")
+        self.settings_label.pack(pady=5)
 
-        self.brightness_slider = tk.Scale(root, from_=0, to=255, orient="horizontal")
+        # Brightness Slider with Label
+        brightness_frame = tk.Frame(root)
+        brightness_frame.pack(pady=5, fill="x")
+
+        brightness_label = tk.Label(brightness_frame, text="Brightness:")
+        brightness_label.pack(side="left", padx=5)
+
+        self.brightness_slider = tk.Scale(brightness_frame, from_=0, to=255, orient="horizontal")
         self.brightness_slider.set(255)
-        self.brightness_slider.pack(pady=5)
+        self.brightness_slider.pack(side="left", fill="x", expand=True)
+
+        # Speed Slider with Label
+        speed_frame = tk.Frame(root)
+        speed_frame.pack(pady=5, fill="x")
+
+        speed_label = tk.Label(speed_frame, text="Speed:")
+        speed_label.pack(side="left", padx=5)
+
+        self.speed_slider = tk.Scale(speed_frame, from_=0, to=255, orient="horizontal")
+        self.speed_slider.set(128)
+        self.speed_slider.pack(side="left", fill="x", expand=True)
+
+        # radius Slider with Label
+        radius_frame = tk.Frame(root)
+        radius_frame.pack(pady=5, fill="x")
+
+        radius_label = tk.Label(radius_frame, text="Radius:")
+        radius_label.pack(side="left", padx=5)
+
+        self.radius_slider = tk.Scale(radius_frame, from_=0, to=255, orient="horizontal")
+        self.radius_slider.set(128)
+        self.radius_slider.pack(side="left", fill="x", expand=True)
 
         # Multi-scene playback
         self.playback_label = tk.Label(root, text="Multi-Scene Playback (seconds per scene):")
@@ -87,6 +150,7 @@ class StageLaserProjectionApp:
         self.log_text.pack(pady=5)
 
         self.running = False
+        self.running_thread = None
         self.current_scene_name = None
         self.selected_monitor = None
         self.playback_thread = None
@@ -160,11 +224,11 @@ class StageLaserProjectionApp:
         self.playback_active = self.playback_var.get()
 
         # Start projection thread
-        threading.Thread(target=self.run_scene, daemon=True).start()
+        self.running_thread = threading.Thread(target=self.run_scene, daemon=True).start()
 
         # Start multi-scene playback if enabled
         if self.playback_active:
-            threading.Thread(target=self.multi_scene_playback, daemon=True).start()
+            self.running_thread = threading.Thread(target=self.multi_scene_playback, daemon=True).start()
 
     def edit_scene_live(self):
         """Open a live editor for the current scene."""
@@ -180,67 +244,79 @@ class StageLaserProjectionApp:
     def multi_scene_playback(self):
         """Cycle through scenes during playback."""
         scene_names = list(self.scenes.keys())
-        scene_duration = int(self.playback_entry.get())
+        scene_duration = int(self.playback_entry.get())  # Duration per scene in seconds
 
         while self.playback_active and self.running:
             for scene_name in scene_names:
                 if not (self.playback_active and self.running):
-                    break
+                    break  # Exit if playback or running stops
 
+                # Update the current scene name
                 self.current_scene_name = scene_name
                 self.log(f"Playing scene: {scene_name}")
 
-                # Wait for scene duration
-                pygame.time.wait(scene_duration * 1000)
+                # Wait for the specified scene duration
+                for _ in range(scene_duration * 100):  # Check every 10 ms
+                    if not (self.playback_active and self.running):
+                        break
+                    pygame.time.wait(10)
 
     def run_scene(self):
         """Run the current scene with advanced motion rendering."""
         pygame.init()
 
-        # Set up the full-screen window on the selected monitor
         os.environ['SDL_VIDEO_WINDOW_POS'] = f"{self.selected_monitor.x},{self.selected_monitor.y}"
         screen = pygame.display.set_mode((self.selected_monitor.width, self.selected_monitor.height), pygame.NOFRAME)
         pygame.display.set_caption("Stage Laser Projection")
         clock = pygame.time.Clock()
 
-        # Track object states
-        object_states = []
-        try:
-            for obj in self.scenes[self.current_scene_name]["objects"]:
-                object_states.append({
-                    "obj": obj,
-                    "time": random.uniform(0, 10),  # Randomize start time
-                    "current_pos": None
-                })
-        except KeyError:
-            self.log("Error: Unable to find current scene.")
-            self.running = False
-            pygame.quit()
-            return
+        object_states = None
 
         while self.running:
+            # Dynamically fetch the current scene
+            scene_name = self.current_scene_name
+            scene = self.scenes.get(scene_name)
+
+            if not scene:
+                self.log(f"Error: Scene '{scene_name}' not found.")
+                self.running = False
+                break
+
+            # Initialize object states if the scene changes
+            if object_states is None or scene_name != getattr(self, "last_scene_name", None):
+                object_states = []
+                for obj in scene["objects"]:
+                    object_states.append({
+                        "obj": obj,
+                        "time": random.uniform(0, 10),  # Randomize start time
+                        "current_pos": None
+                    })
+                self.last_scene_name = scene_name
+
+            # Clear screen
             screen.fill((0, 0, 0))  # Black background
 
+            # Render objects
             for state in object_states:
                 obj = state["obj"]
                 t = state["time"]
                 brightness = self.brightness_slider.get() / 255.0
+                speedMultiplier = (self.speed_slider.get() / 128.0) ** 2
+                radiusMultiplier = (self.radius_slider.get() / 128.0) ** 2
 
                 try:
                     if obj["motion"] == "circular":
-                        # Circular motion calculation
                         center_x, center_y = obj["path_center"]
                         radius = obj["path_radius"]
-                        angular_velocity = obj["angular_velocity"]
+                        angular_velocity = obj["angular_velocity"] * speedMultiplier
                         x = center_x + radius * math.cos(t * angular_velocity)
                         y = center_y + radius * math.sin(t * angular_velocity)
                         current_pos = (int(x), int(y))
 
                     elif obj["motion"] == "path":
                         path = obj["path"]
-                        speed = obj.get("speed", 1)
+                        speed = obj.get("speed", 1) * speedMultiplier
 
-                        # Interpolate along the path
                         total_path_length = len(path) - 1
                         current_segment = int(t * speed) % total_path_length
                         next_segment = (current_segment + 1) % len(path)
@@ -248,20 +324,14 @@ class StageLaserProjectionApp:
                         start_point = path[current_segment]
                         end_point = path[next_segment]
 
-                        # Linear interpolation
                         progress = (t * speed) % 1
                         x = start_point[0] + (end_point[0] - start_point[0]) * progress
                         y = start_point[1] + (end_point[1] - start_point[1]) * progress
 
                         current_pos = (int(x), int(y))
 
-                    # Apply brightness
                     color = tuple(min(255, int(c * brightness)) for c in obj["color"])
-
-                    # Draw the object
-                    pygame.draw.circle(screen, color, current_pos, obj["radius"])
-
-                    # Update time
+                    pygame.draw.circle(screen, color, current_pos, obj["radius"] * radiusMultiplier)
                     state["time"] += 0.016  # Roughly 60 FPS
                     state["current_pos"] = current_pos
 
@@ -271,7 +341,7 @@ class StageLaserProjectionApp:
             pygame.display.flip()
             clock.tick(60)
 
-            # Handle Pygame events to allow closing
+            # Handle Pygame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -283,6 +353,17 @@ class StageLaserProjectionApp:
         self.running = False
         self.playback_active = False
         self.log("Projection stopped.")
+
+    def quit(self):
+        """Stop the projection and close the application."""
+        self.stop_scene()  # Wait for threads to stop
+        self.root.quit()
+
+    def update_slider(self, brightness, speed, radius):
+        """Update the brightness slider from Art-Net data."""
+        self.brightness_slider.set(brightness)
+        self.speed_slider.set(speed)
+        self.radius_slider.set(radius)
 
 
 import tkinter as tk
@@ -613,6 +694,6 @@ StageLaserProjectionApp = add_live_scene_editing_method(StageLaserProjectionApp)
 if __name__ == "__main__":
     root = tk.Tk()
     app = StageLaserProjectionApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.stop_scene)  # Stop scene on close
+    root.protocol("WM_DELETE_WINDOW", app.quit())  # Stop scene on close
     root.mainloop()
 
