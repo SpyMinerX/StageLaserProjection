@@ -129,4 +129,4 @@ Internally, `.spyLAZ` files contain a JSON-like structure encoded in Base64. Her
 
 ---
 
-This document ensures that you can effectively create, load, and run stage laser projection scenes using the provided executables. Let me know if further clarification is needed!
+This Project is Owned and Maintained by [Spyminer(Miaya Engelbrecht)](https://spyminer.dev) and [S. Meyer](https://simeonmeyer.de)
