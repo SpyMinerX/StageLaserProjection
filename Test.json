@@ -1,0 +1,21 @@
+{
+  "name": "Circular Paths Example",
+  "objects": [
+    {
+      "motion": "circular",
+      "path_center": [400, 300],
+      "path_radius": 100,
+      "angular_velocity": 2,
+      "color": [255, 0, 0],
+      "radius": 50
+    },
+    {
+      "motion": "path",
+      "path": [[100, 100], [300, 300], [500, 100]],
+      "animation": "loop",
+      "color": [0, 255, 0],
+      "radius": 40,
+      "speed": 3
+    }
+  ]
+}

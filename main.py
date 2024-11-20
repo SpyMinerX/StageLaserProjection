@@ -7,6 +7,7 @@ import os
 import json
 import glob
 import math
+import base64
 
 
 class StageLaserProjectionApp:
@@ -24,10 +25,10 @@ class StageLaserProjectionApp:
         self.monitor_combobox.current(0)
 
         # Scene folder selection
-        self.folder_label = tk.Label(root, text="Scene Folder:")
+        self.folder_label = tk.Label(root, text="Select Folder with spyLAZ Files:")
         self.folder_label.pack(pady=5)
 
-        self.folder_path = tk.StringVar(value="scenes")
+        self.folder_path = tk.StringVar(value="")
         self.folder_entry = tk.Entry(root, textvariable=self.folder_path, state="readonly", width=40)
         self.folder_entry.pack(pady=5)
 
@@ -40,6 +41,7 @@ class StageLaserProjectionApp:
 
         self.scene_combobox = ttk.Combobox(root, state="readonly")
         self.scene_combobox.pack(pady=5)
+        self.scene_combobox.bind("<<ComboboxSelected>>", self.change_scene)
 
         # Brightness slider
         self.brightness_label = tk.Label(root, text="Laser Brightness:")
@@ -49,42 +51,58 @@ class StageLaserProjectionApp:
         self.brightness_slider.set(255)
         self.brightness_slider.pack(pady=5)
 
-        # Start button
+        # Start and Stop buttons
         self.start_button = tk.Button(root, text="Start Projection", command=self.start_scene)
         self.start_button.pack(pady=10)
 
+        self.stop_button = tk.Button(root, text="Stop Projection", command=self.stop_scene)
+        self.stop_button.pack(pady=5)
+
         self.running = False
+        self.current_scene_name = None
         self.selected_monitor = None
 
         # Scene data
         self.scenes = {}
-        self.load_scenes()
 
     def browse_folder(self):
-        """Open a file dialog to select a folder for scenes."""
-        folder_selected = filedialog.askdirectory(title="Select Scene Folder")
+        """Open a file dialog to select a folder containing .spyLAZ files."""
+        folder_selected = filedialog.askdirectory(title="Select Folder with spyLAZ Files")
         if folder_selected:
             self.folder_path.set(folder_selected)
             self.load_scenes()
 
     def load_scenes(self):
-        """Load scenes from JSON files in the selected folder."""
+        """Load scenes from all .spyLAZ files in the selected folder."""
         folder = self.folder_path.get()
-        scene_files = glob.glob(os.path.join(folder, "*.json"))
-        self.scenes = {}
-        for file in scene_files:
-            with open(file, "r") as f:
-                try:
-                    scene_data = json.load(f)
-                    self.scenes[scene_data["name"]] = scene_data
-                except (json.JSONDecodeError, KeyError) as e:
-                    print(f"Error loading scene from {file}: {e}")
+        if not folder:
+            print("No folder selected.")
+            return
 
-        self.scene_combobox["values"] = list(self.scenes.keys())
-        if self.scenes:
-            self.scene_combobox.current(0)
-        else:
-            self.scene_combobox.set("")
+        # Clear previous scenes
+        self.scenes = {}
+
+        try:
+            # Scan folder for .spyLAZ files
+            for file_path in glob.glob(os.path.join(folder, "*.spyLAZ")):
+                with open(file_path, "rb") as file:
+                    encoded_data = file.read()
+                    decoded_data = base64.b64decode(encoded_data).decode("utf-8")
+                    scene_data = json.loads(decoded_data)
+
+                    # Ensure the file contains a valid scene
+                    if "name" in scene_data and "objects" in scene_data:
+                        self.scenes[scene_data["name"]] = scene_data
+                    else:
+                        print(f"Invalid scene format in file: {file_path}")
+
+            # Update scene combobox
+            self.scene_combobox["values"] = list(self.scenes.keys())
+            if self.scenes:
+                self.scene_combobox.current(0)
+                self.current_scene_name = self.scene_combobox.get()
+        except Exception as e:
+            print(f"Error loading scenes from folder: {e}")
 
     def start_scene(self):
         if self.running:
@@ -92,15 +110,21 @@ class StageLaserProjectionApp:
 
         monitor_index = self.monitor_combobox.current()
         self.selected_monitor = get_monitors()[monitor_index]
-        scene_name = self.scene_combobox.get()
+        self.current_scene_name = self.scene_combobox.get()
 
-        if scene_name not in self.scenes:
+        if self.current_scene_name not in self.scenes:
             return
 
         self.running = True
-        threading.Thread(target=self.run_scene, args=(self.scenes[scene_name],), daemon=True).start()
+        threading.Thread(target=self.run_scene, daemon=True).start()
 
-    def run_scene(self, scene):
+    def change_scene(self, event=None):
+        """Change the current scene live."""
+        new_scene_name = self.scene_combobox.get()
+        if new_scene_name != self.current_scene_name:
+            self.current_scene_name = new_scene_name
+
+    def run_scene(self):
         pygame.init()
 
         # Set up the full-screen window on the selected monitor
@@ -109,15 +133,19 @@ class StageLaserProjectionApp:
         pygame.display.set_caption("Stage Laser Projection")
         clock = pygame.time.Clock()
 
-        # Objects in the scene
-        objects = scene.get("objects", [])
-
-        # Initialize angular positions for circular paths
-        for obj in objects:
-            if obj.get("motion") == "circular":
-                obj["angle"] = 0
-
         while self.running:
+            # Reload the current scene if it has changed
+            scene = self.scenes.get(self.current_scene_name, {})
+            objects = scene.get("objects", [])
+
+            # Initialize motion attributes
+            for obj in objects:
+                if obj.get("motion") == "path" and "current_checkpoint" not in obj:
+                    obj["current_checkpoint"] = 0
+                    obj["reverse"] = False
+                elif obj.get("motion") == "circular" and "angle" not in obj:
+                    obj["angle"] = 0
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -131,21 +159,50 @@ class StageLaserProjectionApp:
             # Update and draw objects
             for obj in objects:
                 if obj.get("motion") == "circular":
-                    # Update angle for circular motion
-                    obj["angle"] += obj["angular_velocity"]
+                    # Update position for circular motion
                     angle_rad = math.radians(obj["angle"])
                     center_x, center_y = obj["path_center"]
                     obj["x"] = center_x + obj["path_radius"] * math.cos(angle_rad)
                     obj["y"] = center_y + obj["path_radius"] * math.sin(angle_rad)
-                else:  # Linear motion
-                    obj["x"] += obj["vx"]
-                    obj["y"] += obj["vy"]
+                    obj["angle"] += obj["angular_velocity"]
 
-                    # Bounce off edges
-                    if obj["x"] - obj["radius"] < 0 or obj["x"] + obj["radius"] > self.selected_monitor.width:
-                        obj["vx"] = -obj["vx"]
-                    if obj["y"] - obj["radius"] < 0 or obj["y"] + obj["radius"] > self.selected_monitor.height:
-                        obj["vy"] = -obj["vy"]
+                elif obj.get("motion") == "path":
+                    # Move along the defined path
+                    path = obj["path"]
+                    speed = obj.get("speed", 1)
+                    current_checkpoint = obj["current_checkpoint"]
+                    reverse = obj["reverse"]
+
+                    if reverse:
+                        next_checkpoint = path[current_checkpoint - 1]
+                    else:
+                        next_checkpoint = path[current_checkpoint]
+
+                    dx = next_checkpoint[0] - obj.get("x", path[0][0])
+                    dy = next_checkpoint[1] - obj.get("y", path[0][1])
+                    distance = math.sqrt(dx**2 + dy**2)
+
+                    if distance > speed:
+                        obj["x"] = obj.get("x", path[0][0]) + speed * dx / distance
+                        obj["y"] = obj.get("y", path[0][1]) + speed * dy / distance
+                    else:
+                        obj["x"], obj["y"] = next_checkpoint
+
+                        if reverse:
+                            obj["current_checkpoint"] -= 1
+                            if obj["current_checkpoint"] <= 0:
+                                obj["reverse"] = False
+                        else:
+                            obj["current_checkpoint"] += 1
+                            if obj["current_checkpoint"] >= len(path):
+                                animation = obj.get("animation", "none")
+                                if animation == "bounce":
+                                    obj["reverse"] = True
+                                    obj["current_checkpoint"] -= 1
+                                elif animation == "loop":
+                                    obj["current_checkpoint"] = 0
+                                else:
+                                    obj["motion"] = None  # Stop motion
 
                 # Adjust color brightness
                 base_color = obj["color"]
@@ -165,6 +222,7 @@ class StageLaserProjectionApp:
         pygame.quit()
 
     def stop_scene(self):
+        """Stop the currently running projection."""
         self.running = False
 
 

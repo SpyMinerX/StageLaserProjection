@@ -1,0 +1,29 @@
+{
+  "name": "Path with Animations",
+  "objects": [
+    {
+      "motion": "path",
+      "path": [[100, 100], [300, 100], [300, 300], [100, 300]],
+      "animation": "bounce",
+      "color": [255, 0, 0],
+      "radius": 50,
+      "speed": 2
+    },
+    {
+      "motion": "path",
+      "path": [[400, 400], [600, 400]],
+      "animation": "loop",
+      "color": [0, 255, 0],
+      "radius": 40,
+      "speed": 3
+    },
+    {
+      "motion": "path",
+      "path": [[200, 200], [500, 500]],
+      "animation": "none",
+      "color": [0, 0, 255],
+      "radius": 60,
+      "speed": 4
+    }
+  ]
+}
