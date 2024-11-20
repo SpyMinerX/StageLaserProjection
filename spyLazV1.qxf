@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE FixtureDefinition>
+<FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
+ <Creator>
+  <Name>Q Light Controller Plus</Name>
+  <Version>4.13.1</Version>
+  <Author>SpyMiner</Author>
+ </Creator>
+ <Manufacturer>SpyMiner Network + Meyer Technologies</Manufacturer>
+ <Model>spyLaz V1</Model>
+ <Type>Laser</Type>
+ <Channel Name="Brightness" Preset="IntensityMasterDimmer"/>
+ <Channel Name="Speed" Default="128" Preset="SpeedPanTiltFastSlow"/>
+ <Channel Name="Radius" Default="128" Preset="BeamZoomBigSmall"/>
+ <Channel Name="XShift" Default="128" Preset="PositionXAxis"/>
+ <Channel Name="YShift" Default="128" Preset="PositionYAxis"/>
+ <Channel Name="Scale" Default="128" Preset="BeamZoomBigSmall"/>
+ <Mode Name="Normal">
+  <Channel Number="0">Brightness</Channel>
+  <Channel Number="1">Speed</Channel>
+  <Channel Number="2">Radius</Channel>
+  <Channel Number="3">XShift</Channel>
+  <Channel Number="4">YShift</Channel>
+  <Channel Number="5">Scale</Channel>
+ </Mode>
+ <Physical>
+  <Bulb Type="" Lumens="0" ColourTemperature="0"/>
+  <Dimensions Weight="0" Width="0" Height="0" Depth="0"/>
+  <Lens Name="Other" DegreesMin="0" DegreesMax="0"/>
+  <Focus Type="Fixed" PanMax="0" TiltMax="0"/>
+  <Technical PowerConsumption="0" DmxConnector="5-pin"/>
+ </Physical>
+</FixtureDefinition>

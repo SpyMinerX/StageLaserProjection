@@ -34,7 +34,10 @@ class ArtNetReceiver(threading.Thread):
                         brightness = dmx_data[0]
                         speed = dmx_data[1]
                         radius = dmx_data[2]
-                        self.app.update_slider(brightness, speed, radius)
+                        shift_x = dmx_data[3]
+                        shift_y = dmx_data[4]
+                        scale = dmx_data[5]
+                        self.app.update_slider(brightness, speed, radius, shift_x, shift_y, scale)
             except Exception as e:
                 print(f"Art-Net receiver error: {e}")
 
@@ -116,6 +119,37 @@ class StageLaserProjectionApp:
         self.radius_slider = tk.Scale(radius_frame, from_=0, to=255, orient="horizontal")
         self.radius_slider.set(128)
         self.radius_slider.pack(side="left", fill="x", expand=True)
+
+        # Coordinates Shift and Scale Frame
+        shift_scale_frame = tk.Frame(root)
+        shift_scale_frame.pack(pady=5, fill="x")
+
+        # X Shift Slider
+        x_shift_label = tk.Label(shift_scale_frame, text="X Shift:")
+        x_shift_label.pack(side="left", padx=5)
+
+        self.x_shift_slider = tk.Scale(shift_scale_frame, from_=0, to=255, orient="horizontal")
+        self.x_shift_slider.set(128)
+        self.x_shift_slider.pack(side="left", fill="x", expand=True)
+
+        # Y Shift Slider
+        y_shift_label = tk.Label(shift_scale_frame, text="Y Shift:")
+        y_shift_label.pack(side="left", padx=5)
+
+        self.y_shift_slider = tk.Scale(shift_scale_frame, from_=0, to=255, orient="horizontal")
+        self.y_shift_slider.set(128)
+        self.y_shift_slider.pack(side="left", fill="x", expand=True)
+
+        # Scale Slider Frame
+        scale_frame = tk.Frame(root)
+        scale_frame.pack(pady=5, fill="x")
+
+        scale_label = tk.Label(scale_frame, text="Scale:")
+        scale_label.pack(side="left", padx=5)
+
+        self.scale_slider = tk.Scale(scale_frame, from_=0, to=255, orient="horizontal", resolution=0.1)
+        self.scale_slider.set(128)
+        self.scale_slider.pack(side="left", fill="x", expand=True)
 
         # Multi-scene playback
         self.playback_label = tk.Label(root, text="Multi-Scene Playback (seconds per scene):")
@@ -272,6 +306,10 @@ class StageLaserProjectionApp:
 
         object_states = None
 
+        # Calculate the center of the screen
+        center_x = self.selected_monitor.width / 2
+        center_y = self.selected_monitor.height / 2
+
         while self.running:
             # Dynamically fetch the current scene
             scene_name = self.current_scene_name
@@ -303,15 +341,21 @@ class StageLaserProjectionApp:
                 brightness = self.brightness_slider.get() / 255.0
                 speedMultiplier = (self.speed_slider.get() / 128.0) ** 2
                 radiusMultiplier = (self.radius_slider.get() / 128.0) ** 2
+                shift_x = self.x_shift_slider.get() - 128.0
+                shift_y = self.y_shift_slider.get() - 128.0
+                scale = self.scale_slider.get() / 128.0
 
                 try:
                     if obj["motion"] == "circular":
-                        center_x, center_y = obj["path_center"]
+                        # Adjust path center to the new coordinate system
+                        center_x_obj = obj["path_center"][0] - center_x
+                        center_y_obj = obj["path_center"][1] - center_y
                         radius = obj["path_radius"]
                         angular_velocity = obj["angular_velocity"] * speedMultiplier
-                        x = center_x + radius * math.cos(t * angular_velocity)
-                        y = center_y + radius * math.sin(t * angular_velocity)
-                        current_pos = (int(x), int(y))
+
+                        # Compute position in circular motion
+                        x = center_x_obj + radius * math.cos(t * angular_velocity)
+                        y = center_y_obj + radius * math.sin(t * angular_velocity)
 
                     elif obj["motion"] == "path":
                         path = obj["path"]
@@ -321,17 +365,30 @@ class StageLaserProjectionApp:
                         current_segment = int(t * speed) % total_path_length
                         next_segment = (current_segment + 1) % len(path)
 
-                        start_point = path[current_segment]
-                        end_point = path[next_segment]
+                        # Adjust path points to the new coordinate system
+                        start_point = (
+                            path[current_segment][0] - center_x,
+                            path[current_segment][1] - center_y
+                        )
+                        end_point = (
+                            path[next_segment][0] - center_x,
+                            path[next_segment][1] - center_y
+                        )
 
                         progress = (t * speed) % 1
                         x = start_point[0] + (end_point[0] - start_point[0]) * progress
                         y = start_point[1] + (end_point[1] - start_point[1]) * progress
 
-                        current_pos = (int(x), int(y))
+                    # Apply scaling and shifting
+                    x = x * scale + shift_x
+                    y = y * scale + shift_y
 
+                    # Convert back to the Pygame coordinate system
+                    current_pos = (int(x + center_x), int(y + center_y))
+
+                    # Draw the object
                     color = tuple(min(255, int(c * brightness)) for c in obj["color"])
-                    pygame.draw.circle(screen, color, current_pos, obj["radius"] * radiusMultiplier)
+                    pygame.draw.circle(screen, color, current_pos, int(obj["radius"] * radiusMultiplier))
                     state["time"] += 0.016  # Roughly 60 FPS
                     state["current_pos"] = current_pos
 
@@ -359,11 +416,15 @@ class StageLaserProjectionApp:
         self.stop_scene()  # Wait for threads to stop
         self.root.quit()
 
-    def update_slider(self, brightness, speed, radius):
+    def update_slider(self, brightness, speed, radius, shift_x, shift_y, scale):
         """Update the brightness slider from Art-Net data."""
         self.brightness_slider.set(brightness)
         self.speed_slider.set(speed)
         self.radius_slider.set(radius)
+        self.x_shift_slider.set(shift_x)
+        self.y_shift_slider.set(shift_y)
+        self.scale_slider.set(scale)
+
 
 
 import tkinter as tk
