@@ -285,8 +285,334 @@ class StageLaserProjectionApp:
         self.log("Projection stopped.")
 
 
+import tkinter as tk
+from tkinter import ttk, colorchooser, messagebox
+import json
+
+
+class LiveSceneEditor:
+    def __init__(self, parent, update_callback, current_scene):
+        self.parent = parent
+        self.update_callback = update_callback
+        self.current_scene = current_scene.copy()
+
+        # Create editor window
+        self.editor_window = tk.Toplevel(parent)
+        self.editor_window.title("Live Scene Editor")
+        self.editor_window.geometry("800x600")
+
+        # Scene name
+        tk.Label(self.editor_window, text="Scene Name:").pack(pady=5)
+        self.scene_name_var = tk.StringVar(value=self.current_scene.get("name", "Unnamed Scene"))
+        tk.Entry(self.editor_window, textvariable=self.scene_name_var, width=50).pack(pady=5)
+
+        # Objects Frame
+        self.objects_frame = tk.Frame(self.editor_window)
+        self.objects_frame.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        # Objects Listbox
+        self.objects_listbox = tk.Listbox(self.objects_frame, width=50)
+        self.objects_listbox.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        self.objects_listbox.bind('<<ListboxSelect>>', self.load_object_details)
+
+        # Object Details Frame
+        self.details_frame = tk.Frame(self.objects_frame)
+        self.details_frame.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH, padx=10)
+
+        # Populate objects listbox
+        self.populate_objects_listbox()
+
+        # Object Manipulation Buttons
+        button_frame = tk.Frame(self.editor_window)
+        button_frame.pack(pady=10)
+
+        tk.Button(button_frame, text="Add Object", command=self.add_object).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Remove Object", command=self.remove_object).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Save Scene", command=self.save_scene).pack(side=tk.LEFT, padx=5)
+
+        # Object Details Widgets
+        self.create_object_detail_widgets()
+
+    def populate_objects_listbox(self):
+        """Populate the listbox with objects from the current scene."""
+        self.objects_listbox.delete(0, tk.END)
+        for i, obj in enumerate(self.current_scene.get("objects", [])):
+            motion_type = obj.get("motion", "Unknown")
+            display_text = f"Object {i + 1}: {motion_type} Motion"
+            self.objects_listbox.insert(tk.END, display_text)
+
+    def create_object_detail_widgets(self):
+        """Create widgets for editing object details."""
+        # Motion Type
+        tk.Label(self.details_frame, text="Motion Type:").pack()
+        self.motion_var = tk.StringVar()
+        self.motion_combobox = ttk.Combobox(self.details_frame,
+                                            textvariable=self.motion_var,
+                                            values=["circular", "path"],
+                                            state="readonly")
+        self.motion_combobox.pack()
+        self.motion_combobox.bind("<<ComboboxSelected>>", self.update_motion_fields)
+
+        # Path/Center Coordinates
+        tk.Label(self.details_frame, text="Path/Center Coordinates:").pack()
+        self.coordinates_text = tk.Text(self.details_frame, height=3, width=40)
+        self.coordinates_text.pack()
+
+        # Color Selection
+        tk.Label(self.details_frame, text="Color:").pack()
+        self.color_frame = tk.Frame(self.details_frame)
+        self.color_frame.pack()
+        self.color_button = tk.Button(self.color_frame, text="Choose Color", command=self.choose_color)
+        self.color_button.pack(side=tk.LEFT)
+        self.color_display = tk.Label(self.color_frame, text="Current Color", width=20)
+        self.color_display.pack(side=tk.LEFT)
+
+        # Radius
+        tk.Label(self.details_frame, text="Radius:").pack()
+        self.radius_var = tk.IntVar(value=30)
+        self.radius_scale = tk.Scale(self.details_frame, from_=5, to=100,
+                                     orient=tk.HORIZONTAL)
+        self.radius_scale.pack()
+
+        # Motion-Specific Fields
+        tk.Label(self.details_frame, text="Motion Parameters:").pack()
+        self.motion_params_text = tk.Text(self.details_frame, height=3, width=40)
+        self.motion_params_text.pack()
+
+        # Update Button
+        tk.Button(self.details_frame, text="Update Object", command=self.update_object).pack(pady=10)
+
+    def load_object_details(self, event=None):
+        """Load details of the selected object."""
+        try:
+            selected_index = self.objects_listbox.curselection()[0]
+            obj = self.current_scene["objects"][selected_index]
+
+            # Set motion type
+            self.motion_var.set(obj.get("motion", ""))
+
+            # Set coordinates
+            if obj.get("motion") == "circular":
+                coords = obj.get("path_center", [0, 0])
+                self.coordinates_text.delete(1.0, tk.END)
+                self.coordinates_text.insert(tk.END, f"{coords[0]}, {coords[1]}")
+
+                # Set angular velocity
+                self.motion_params_text.delete(1.0, tk.END)
+                self.motion_params_text.insert(tk.END,
+                                               f"Angular Velocity: {obj.get('angular_velocity', 1)}\n"
+                                               f"Path Radius: {obj.get('path_radius', 100)}")
+
+            elif obj.get("motion") == "path":
+                path = obj.get("path", [])
+                self.coordinates_text.delete(1.0, tk.END)
+                self.coordinates_text.insert(tk.END,
+                                             "\n".join([f"{p[0]}, {p[1]}" for p in path]))
+
+                # Set path-specific parameters
+                self.motion_params_text.delete(1.0, tk.END)
+                self.motion_params_text.insert(tk.END,
+                                               f"Animation: {obj.get('animation', 'loop')}\n"
+                                               f"Speed: {obj.get('speed', 1)}")
+
+            # Set color
+            color = obj.get("color", [255, 0, 0])
+            self.color_display.config(bg=f'#{color[0]:02x}{color[1]:02x}{color[2]:02x}')
+
+            # Set radius
+            self.radius_scale.set(obj.get("radius", 30))
+
+        except (IndexError, KeyError):
+            messagebox.showwarning("Selection Error", "Please select an object to edit.")
+
+    def choose_color(self):
+        """Open color chooser dialog."""
+        color = colorchooser.askcolor(title="Choose object color")
+        if color[0]:  # If a color was chosen
+            # Convert to RGB
+            rgb = [int(x) for x in color[0]]
+            self.color_display.config(bg=color[1])
+            return rgb
+        return None
+
+    def update_motion_fields(self, event=None):
+        """Update fields based on selected motion type."""
+        motion_type = self.motion_var.get()
+
+        # Clear previous entries
+        self.coordinates_text.delete(1.0, tk.END)
+        self.motion_params_text.delete(1.0, tk.END)
+
+        if motion_type == "circular":
+            # Default circular motion parameters
+            self.coordinates_text.insert(tk.END, "400, 300")
+            self.motion_params_text.insert(tk.END,
+                                           "Angular Velocity: 1\n"
+                                           "Path Radius: 150")
+
+        elif motion_type == "path":
+            # Default path motion parameters
+            self.coordinates_text.insert(tk.END,
+                                         "100, 100\n"
+                                         "700, 100\n"
+                                         "700, 700\n"
+                                         "100, 700")
+            self.motion_params_text.insert(tk.END,
+                                           "Animation: loop\n"
+                                           "Speed: 2")
+
+    def add_object(self):
+        """Add a new object to the scene."""
+        new_object = {
+            "motion": "circular",
+            "path_center": [400, 300],
+            "path_radius": 150,
+            "angular_velocity": 1,
+            "color": [255, 0, 0],
+            "radius": 30
+        }
+
+        # Add to current scene
+        if "objects" not in self.current_scene:
+            self.current_scene["objects"] = []
+        self.current_scene["objects"].append(new_object)
+
+        # Refresh listbox
+        self.populate_objects_listbox()
+
+        # Select the new object
+        self.objects_listbox.selection_clear(0, tk.END)
+        self.objects_listbox.selection_set(tk.END)
+        self.objects_listbox.event_generate('<<ListboxSelect>>')
+
+    def remove_object(self):
+        """Remove the selected object from the scene."""
+        try:
+            selected_index = self.objects_listbox.curselection()[0]
+            del self.current_scene["objects"][selected_index]
+            self.populate_objects_listbox()
+        except IndexError:
+            messagebox.showwarning("Selection Error", "Please select an object to remove.")
+
+    def update_object(self):
+        """Update the selected object with current details."""
+        try:
+            selected_index = self.objects_listbox.curselection()[0]
+            obj = self.current_scene["objects"][selected_index]
+
+            # Update motion type
+            obj["motion"] = self.motion_var.get()
+
+            # Parse coordinates
+            coords_text = self.coordinates_text.get(1.0, tk.END).strip()
+
+            if obj["motion"] == "circular":
+                # Parse center coordinates
+                center_coords = [int(x.strip()) for x in coords_text.split(',')]
+                obj["path_center"] = center_coords
+
+                # Parse motion parameters
+                params = self.motion_params_text.get(1.0, tk.END).strip().split('\n')
+                param_dict = dict(param.split(': ') for param in params)
+
+                obj["angular_velocity"] = float(param_dict.get('Angular Velocity', 1))
+                obj["path_radius"] = int(param_dict.get('Path Radius', 150))
+
+            elif obj["motion"] == "path":
+                # Parse path coordinates
+                path_coords = [
+                    [int(x.strip()) for x in coord.split(',')]
+                    for coord in coords_text.split('\n')
+                ]
+                obj["path"] = path_coords
+
+                # Parse motion parameters
+                params = self.motion_params_text.get(1.0, tk.END).strip().split('\n')
+                param_dict = dict(param.split(': ') for param in params)
+
+                obj["animation"] = param_dict.get('Animation', 'loop')
+                obj["speed"] = float(param_dict.get('Speed', 2))
+
+            # Update color
+            current_color = self.color_display.cget('bg')
+            # Convert hex to RGB
+            obj["color"] = [
+                int(current_color[1:3], 16),
+                int(current_color[3:5], 16),
+                int(current_color[5:7], 16)
+            ]
+
+            # Update radius
+            obj["radius"] = self.radius_scale.get()
+
+            # Refresh display
+            self.populate_objects_listbox()
+
+            messagebox.showinfo("Success", "Object updated successfully!")
+
+        except Exception as e:
+            messagebox.showerror("Update Error", f"Failed to update object: {str(e)}")
+
+    def save_scene(self):
+        """Save the modified scene."""
+        # Update scene name
+        self.current_scene["name"] = self.scene_name_var.get()
+
+        # Call the update callback with the modified scene
+        self.update_callback(self.current_scene)
+
+        # Close the editor
+        self.editor_window.destroy()
+
+
+# Modify the main application class to integrate the live scene editor
+def add_live_scene_editing_method(cls):
+    def edit_scene_live(self):
+        """Open a live editor for the current scene."""
+        if not self.current_scene_name:
+            self.log("No scene selected for editing.")
+            return
+
+        # Get the current scene
+        current_scene = self.scenes.get(self.current_scene_name)
+
+        if not current_scene:
+            self.log("Unable to find current scene.")
+            return
+
+        # Create the live scene editor
+        LiveSceneEditor(self.root,
+                        update_callback=self.update_current_scene,
+                        current_scene=current_scene)
+
+    def update_current_scene(self, updated_scene):
+        """Update the current scene in the scenes dictionary."""
+        # Update the scene in the main scenes dictionary
+        self.scenes[updated_scene["name"]] = updated_scene
+
+        # Update the scene combobox if the name changed
+        scene_names = list(self.scenes.keys())
+        self.scene_combobox['values'] = scene_names
+
+        # Select the updated scene
+        current_index = scene_names.index(updated_scene["name"])
+        self.scene_combobox.current(current_index)
+        self.current_scene_name = updated_scene["name"]
+
+        self.log(f"Scene '{updated_scene['name']}' updated successfully.")
+
+    # Add the methods to the class
+    cls.edit_scene_live = edit_scene_live
+    cls.update_current_scene = update_current_scene
+
+    return cls
+
+
+
+StageLaserProjectionApp = add_live_scene_editing_method(StageLaserProjectionApp)
 if __name__ == "__main__":
     root = tk.Tk()
     app = StageLaserProjectionApp(root)
     root.protocol("WM_DELETE_WINDOW", app.stop_scene)  # Stop scene on close
     root.mainloop()
+
